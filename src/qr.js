@@ -81,7 +81,7 @@ async function createColoredQrPng({ text, size = 1024 }) {
   return buf;
 }
 
-async function createQrPngWithLogo({ text, logoPath, size = 1024, logoMode = null }) {
+async function createQrPngWithLogo({ text, logoPath, logoBuffer, size = 1024, logoMode = null }) {
   let qrPng;
   if (logoMode === "default") {
     qrPng = await createColoredQrPng({ text, size });
@@ -95,8 +95,9 @@ async function createQrPngWithLogo({ text, logoPath, size = 1024, logoMode = nul
     });
   }
 
-  if (!logoPath) return qrPng;
-  if (!fs.existsSync(logoPath)) return qrPng;
+  const hasBuf = !!(logoBuffer && Buffer.isBuffer(logoBuffer) && logoBuffer.length > 0);
+  if (!hasBuf && !logoPath) return qrPng;
+  if (!hasBuf && logoPath && !fs.existsSync(logoPath)) return qrPng;
   const qr = sharp(qrPng);
   const qrMeta = await qr.metadata();
   const qrSize = Math.min(qrMeta.width || size, qrMeta.height || size);
@@ -107,7 +108,7 @@ async function createQrPngWithLogo({ text, logoPath, size = 1024, logoMode = nul
   const radius = Math.round(plateSize * 0.18);
 
   // Resize logo to fit within area without cropping
-  const logoBuf = await sharp(logoPath)
+  const logoBuf = await sharp(hasBuf ? logoBuffer : logoPath)
     .resize(logoMax, logoMax, { 
       fit: "contain",
       background: { r: 255, g: 255, b: 255, alpha: 0 }

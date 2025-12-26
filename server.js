@@ -1,12 +1,13 @@
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 
 require("dotenv").config();
 
 const express = require("express");
 const multer = require("multer");
 
-const { getDb } = require("./src/db");
+const { createStore } = require("./src/store");
 const { createQrPngWithLogo } = require("./src/qr");
 const { nanoid } = require("nanoid");
 const { z } = require("zod");
@@ -17,11 +18,9 @@ const PORT = Number(process.env.PORT || 3000);
 const ENV_BASE_URL = (process.env.BASE_URL || "").trim().replace(/\/+$/, "");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
-const IS_VERCEL = process.env.VERCEL === "1" || process.env.VERCEL_ENV;
-const DATA_DIR =
-  (process.env.DATA_DIR && String(process.env.DATA_DIR).trim()) ||
-  (IS_VERCEL ? "/tmp" : path.join(__dirname, "data"));
-const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+const UPLOADS_DIR =
+  (process.env.UPLOADS_DIR && String(process.env.UPLOADS_DIR).trim()) ||
+  path.join(os.tmpdir(), "qr-generator-uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const DEFAULT_LOGO_PATH = path.join(__dirname, "ales logo.png");
@@ -40,11 +39,21 @@ function resolveBaseUrl(req) {
   return `${proto}://${host}`.replace(/\/+$/, "");
 }
 
-function resolveLogoPath(db) {
-  if (fs.existsSync(DEFAULT_LOGO_PATH)) return { path: DEFAULT_LOGO_PATH, source: "default" };
+let storePromise;
+function getStore() {
+  if (!storePromise) storePromise = createStore();
+  return storePromise;
+}
 
-  const configured = db.prepare("SELECT value FROM settings WHERE key = 'logo_path'").get()?.value || "";
-  if (configured && fs.existsSync(configured)) return { path: configured, source: "uploaded" };
+async function resolveDefaultLogo(store) {
+  const blob = await store.getSettingBlob({ key: "logo_blob" });
+  if (blob && blob.blob) {
+    return { buffer: Buffer.from(blob.blob), source: "uploaded-blob" };
+  }
+
+  const configured = await store.getSettingText({ key: "logo_path" });
+  if (configured && fs.existsSync(configured)) return { path: configured, source: "uploaded-path" };
+  if (fs.existsSync(DEFAULT_LOGO_PATH)) return { path: DEFAULT_LOGO_PATH, source: "default" };
   return { path: "", source: "none" };
 }
 
@@ -78,19 +87,13 @@ app.get("/", (req, res) => {
   res.redirect("/admin");
 });
 
-app.get("/admin", requireAdmin, (req, res) => {
-  const db = getDb();
+app.get("/admin", requireAdmin, async (req, res) => {
+  const store = await getStore();
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const perPage = 10;
-  const offset = (page - 1) * perPage;
-  
-  const totalCount = db.prepare("SELECT COUNT(*) as count FROM links").get().count;
-  const totalPages = Math.ceil(totalCount / perPage);
-  
-  const links = db
-    .prepare("SELECT id, name, target_url, created_at, updated_at FROM links ORDER BY updated_at DESC LIMIT ? OFFSET ?")
-    .all(perPage, offset);
-  
+
+  const { links, totalCount, totalPages } = await store.getLinksPage({ page, perPage });
+
   res.render("admin", {
     baseUrl: resolveBaseUrl(req),
     token: req.query.token || "",
@@ -105,8 +108,8 @@ app.get("/admin", requireAdmin, (req, res) => {
   });
 });
 
-app.post("/admin/create", requireAdmin, upload.single("logo_custom"), (req, res) => {
-  const db = getDb();
+app.post("/admin/create", requireAdmin, upload.single("logo_custom"), async (req, res) => {
+  const store = await getStore();
   const token = req.query.token || "";
   const parsed = targetUrlSchema.safeParse(req.body.target_url || "");
   if (!parsed.success) {
@@ -116,7 +119,8 @@ app.post("/admin/create", requireAdmin, upload.single("logo_custom"), (req, res)
   const nameValue = parseName(req.body.name);
   const logoMode = req.body.logo_mode || "default";
   
-  let logoPathCustom = null;
+  let logoCustomBlob = null;
+  let logoCustomMime = null;
   if (logoMode === "custom" && req.file) {
     const ext = path.extname(req.file.originalname || "").toLowerCase();
     const allowed = new Set([".png", ".jpg", ".jpeg", ".webp"]);
@@ -124,36 +128,29 @@ app.post("/admin/create", requireAdmin, upload.single("logo_custom"), (req, res)
       fs.unlinkSync(req.file.path);
       return res.status(400).send("Supported: PNG/JPG/WEBP");
     }
-    const customLogoDir = path.join(DATA_DIR, "custom_logos");
-    fs.mkdirSync(customLogoDir, { recursive: true });
-    const target = path.join(customLogoDir, `${nanoid(12)}${ext}`);
-    try {
-      fs.renameSync(req.file.path, target);
-    } catch {
-      fs.copyFileSync(req.file.path, target);
-      fs.unlinkSync(req.file.path);
-    }
-    logoPathCustom = target;
+    logoCustomBlob = fs.readFileSync(req.file.path);
+    logoCustomMime = req.file.mimetype || "";
+    fs.unlinkSync(req.file.path);
   } else if (req.file) {
     fs.unlinkSync(req.file.path);
   }
   
   const id = nanoid(8);
   const now = new Date().toISOString();
-  db.prepare("INSERT INTO links (id, name, target_url, logo_mode, logo_path_custom, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+  await store.createLink({
     id,
-    nameValue,
-    parsed.data,
+    name: nameValue,
+    targetUrl: parsed.data,
     logoMode,
-    logoPathCustom,
-    now,
+    logoCustomBlob,
+    logoCustomMime,
     now
-  );
+  });
   res.redirect(`/admin?token=${encodeURIComponent(token)}`);
 });
 
-app.post("/admin/:id/update", requireAdmin, (req, res) => {
-  const db = getDb();
+app.post("/admin/:id/update", requireAdmin, async (req, res) => {
+  const store = await getStore();
   const token = req.query.token || "";
   const id = String(req.params.id || "");
   const now = new Date().toISOString();
@@ -163,29 +160,29 @@ app.post("/admin/:id/update", requireAdmin, (req, res) => {
     if (!parsed.success) {
       return res.status(400).send(parsed.error.issues.map((i) => i.message).join("; "));
     }
-    const info = db.prepare("UPDATE links SET target_url = ?, updated_at = ? WHERE id = ?").run(parsed.data, now, id);
-    if (info.changes === 0) return res.status(404).send("Not found");
+    const changes = await store.updateTargetUrl({ id, targetUrl: parsed.data, now });
+    if (changes === 0) return res.status(404).send("Not found");
   }
   
   if (req.body.name !== undefined) {
     const nameValue = parseName(req.body.name);
-    const info = db.prepare("UPDATE links SET name = ?, updated_at = ? WHERE id = ?").run(nameValue, now, id);
-    if (info.changes === 0) return res.status(404).send("Not found");
+    const changes = await store.updateName({ id, name: nameValue, now });
+    if (changes === 0) return res.status(404).send("Not found");
   }
   
   res.redirect(`/admin?token=${encodeURIComponent(token)}`);
 });
 
-app.post("/admin/:id/delete", requireAdmin, (req, res) => {
-  const db = getDb();
+app.post("/admin/:id/delete", requireAdmin, async (req, res) => {
+  const store = await getStore();
   const token = req.query.token || "";
   const id = String(req.params.id || "");
-  db.prepare("DELETE FROM links WHERE id = ?").run(id);
+  await store.deleteLink({ id });
   res.redirect(`/admin?token=${encodeURIComponent(token)}`);
 });
 
 app.post("/admin/logo", requireAdmin, upload.single("logo"), async (req, res) => {
-  const db = getDb();
+  const store = await getStore();
   const token = req.query.token || "";
   if (!req.file) return res.status(400).send("No file uploaded");
 
@@ -196,38 +193,40 @@ app.post("/admin/logo", requireAdmin, upload.single("logo"), async (req, res) =>
     return res.status(400).send("Supported: PNG/JPG/WEBP");
   }
 
-  const target = path.join(DATA_DIR, `logo${ext}`);
-  try {
-    fs.renameSync(req.file.path, target);
-  } catch {
-    fs.copyFileSync(req.file.path, target);
-    fs.unlinkSync(req.file.path);
-  }
+  const logoBlob = fs.readFileSync(req.file.path);
+  const logoMime = req.file.mimetype || "";
+  fs.unlinkSync(req.file.path);
 
-  db.prepare("INSERT INTO settings (key, value) VALUES ('logo_path', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-    .run(target);
+  await store.upsertSettingBlob({ key: "logo_blob", blob: logoBlob, mime: logoMime });
 
   res.redirect(`/admin?token=${encodeURIComponent(token)}`);
 });
 
 app.get("/qr/:id.png", async (req, res) => {
-  const db = getDb();
+  const store = await getStore();
   const id = String(req.params.id || "");
-  const row = db.prepare("SELECT id, target_url, logo_mode, logo_path_custom FROM links WHERE id = ?").get(id);
+  const row = await store.getLinkForQr({ id });
   if (!row) return res.status(404).send("Not found");
 
   let logoPath = null;
+  let logoBuffer = null;
   if (row.logo_mode === "default") {
-    const logo = resolveLogoPath(db);
+    const logo = await resolveDefaultLogo(store);
     logoPath = logo.path || null;
-  } else if (row.logo_mode === "custom" && row.logo_path_custom && fs.existsSync(row.logo_path_custom)) {
-    logoPath = row.logo_path_custom;
+    logoBuffer = logo.buffer || null;
+  } else if (row.logo_mode === "custom") {
+    if (row.logo_custom_blob) {
+      logoBuffer = Buffer.from(row.logo_custom_blob);
+    } else if (row.logo_path_custom && fs.existsSync(row.logo_path_custom)) {
+      logoPath = row.logo_path_custom;
+    }
   }
 
   try {
     const png = await createQrPngWithLogo({
       text: row.target_url,
-      logoPath: logoPath,
+      logoPath,
+      logoBuffer,
       size: 1024,
       logoMode: row.logo_mode
     });
@@ -242,12 +241,12 @@ app.get("/qr/:id.png", async (req, res) => {
   }
 });
 
-app.get("/r/:id", (req, res) => {
-  const db = getDb();
+app.get("/r/:id", async (req, res) => {
+  const store = await getStore();
   const id = String(req.params.id || "");
-  const row = db.prepare("SELECT target_url FROM links WHERE id = ?").get(id);
-  if (!row) return res.status(404).send("Not found");
-  res.redirect(302, row.target_url);
+  const targetUrl = await store.getTargetUrl({ id });
+  if (!targetUrl) return res.status(404).send("Not found");
+  res.redirect(302, targetUrl);
 });
 
 app.use((err, req, res, next) => {

@@ -9,14 +9,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DATA_DIR
-        value: /var/data
       - key: BASE_URL
         value: ""
       - key: ADMIN_TOKEN
         sync: false
-    disk:
-      name: qr-generator-data
-      mountPath: /var/data
-      sizeGB: 1
+      - key: DATABASE_URL
+        sync: false
 
