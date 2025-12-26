@@ -39,6 +39,28 @@ body {
   margin: 0 auto;
 }
 
+/* Login page */
+.login-page {
+  min-height: calc(100vh - 88px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  width: min(680px, 100%);
+  padding: 22px;
+}
+
+.login-actions {
+  margin-top: 16px;
+}
+
+.login-actions .btn {
+  width: 100%;
+  justify-content: center;
+}
+
 .page-header {
   display: flex;
   align-items: flex-end;
@@ -70,6 +92,10 @@ body {
 @media (max-width: 640px) {
   body {
     padding: 20px 14px;
+  }
+
+  .login-page {
+    min-height: calc(100vh - 40px);
   }
 
   .page-header {
@@ -135,7 +161,7 @@ h1 {
 }
 
 .byline {
-  margin-top: 10px;
+  margin-top: 8px;
   color: var(--muted);
   font-size: 13px;
 }
@@ -143,6 +169,7 @@ h1 {
 @media (max-width: 640px) {
   .brand {
     gap: 12px;
+    align-items: flex-start;
   }
   .brand-logo {
     width: 52px;
