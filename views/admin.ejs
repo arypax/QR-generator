@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>QR генератор</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/admin.js" defer></script>
+  </head>
+  <body>
+    <div class="container">
+      <header class="page-header">
+        <div class="title-wrap">
+          <h1>QR генератор</h1>
+          <p class="subtitle">Создавайте QR-коды и управляйте ссылками в одном месте.</p>
+        </div>
+      </header>
+
+      <% if (error === "file_too_large") { %>
+        <div class="alert alert-error">
+          Файл логотипа слишком большой. Максимум: 25 MB.
+        </div>
+      <% } %>
+
+      <section class="panel form-section">
+        <form action="/admin/create?<%= token ? `token=${encodeURIComponent(token)}` : "" %>" method="post" enctype="multipart/form-data" class="create-form">
+          <div class="field">
+            <label class="label" for="create-name">Название (необязательно)</label>
+            <input id="create-name" class="input" name="name" type="text" placeholder="Например: Обучение инженера" />
+          </div>
+          <div class="field">
+            <label class="label" for="create-target-url">Ссылка</label>
+            <input id="create-target-url" class="input" name="target_url" type="url" placeholder="https://…" required />
+          </div>
+          <button class="btn btn-primary" type="submit">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"></path>
+            </svg>
+            Создать QR
+          </button>
+          <div class="field logo-options">
+            <label class="label">Логотип</label>
+            <div class="toggle-group">
+              <label class="toggle-item">
+                <span class="toggle-label">С логотипом АЛЭС</span>
+                <input type="radio" name="logo_mode" value="default" checked class="toggle-input" />
+                <span class="toggle-switch"></span>
+              </label>
+              <label class="toggle-item">
+                <span class="toggle-label">Без логотипа</span>
+                <input type="radio" name="logo_mode" value="none" class="toggle-input" />
+                <span class="toggle-switch"></span>
+              </label>
+              <label class="toggle-item">
+                <span class="toggle-label">Выбрать другой логотип</span>
+                <input type="radio" name="logo_mode" value="custom" class="toggle-input" />
+                <span class="toggle-switch"></span>
+              </label>
+            </div>
+            <div class="file-upload-wrapper">
+              <label for="create-logo-custom" class="file-upload-label">
+                <input id="create-logo-custom" class="input-file js-logo-file" name="logo_custom" type="file" accept="image/png,image/jpeg,image/jpg,image/webp" />
+                <span class="file-upload-text">Выбрать файл</span>
+              </label>
+              <span class="file-name js-file-name"></span>
+              <button type="button" class="file-remove js-file-remove" style="display: none;" aria-label="Удалить файл">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M18 6L6 18M6 6l12 12"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <% if (!links.length) { %>
+        <div class="empty">
+          <div class="empty-title">Пока нет QR-кодов</div>
+          <div class="empty-subtitle">Создайте первую ссылку выше — она появится в списке.</div>
+        </div>
+      <% } else { %>
+        <div class="search-section">
+          <div class="field">
+            <label class="label" for="search-input">Поиск</label>
+            <input id="search-input" class="input js-search-input" type="text" placeholder="Поиск по ID, названию или ссылке..." />
+          </div>
+        </div>
+        <div class="table" role="table" aria-label="Список QR-кодов">
+          <div class="thead">
+            <div>ID</div>
+            <div>Название</div>
+            <div>Целевая ссылка</div>
+            <div>QR код</div>
+            <div>Действия</div>
+          </div>
+          <% links.forEach((l) => { %>
+            <div class="trow" data-id="<%= l.id %>">
+              <div class="cell" data-label="ID"><code><%= l.id %></code></div>
+              <div class="cell" data-label="Название">
+                <div class="name-editor" data-update-url="/admin/<%= l.id %>/update?<%= token ? `token=${encodeURIComponent(token)}` : "" %>">
+                  <input class="input input-sm js-name-input" name="name" type="text" value="<%= l.name || '' %>" placeholder="Без названия" />
+                  <span class="save-state js-name-state" aria-live="polite"></span>
+                </div>
+              </div>
+              <div class="cell target-url" data-label="Целевая ссылка">
+                <div class="url-editor" data-update-url="/admin/<%= l.id %>/update?<%= token ? `token=${encodeURIComponent(token)}` : "" %>">
+                  <input class="input input-sm js-target-url" name="target_url" type="url" value="<%= l.target_url %>" required />
+                  <span class="save-state js-save-state" aria-live="polite"></span>
+                </div>
+              </div>
+              <div class="cell" data-label="QR код">
+                <div class="qr-actions">
+                  <a class="btn btn-ghost btn-sm" href="/qr/<%= l.id %>.png?download=1" download="qr-<%= l.id %>.png">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1z"></path>
+                      <path d="M5 19a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1z"></path>
+                    </svg>
+                    Скачать
+                  </a>
+                  <a class="btn btn-ghost btn-sm" href="/qr/<%= l.id %>.png" target="_blank">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path d="M18 19H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5a1 1 0 1 0 0-2H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3v-5a1 1 0 1 0-2 0v5a1 1 0 0 1-1 1z"></path>
+                      <path d="M14 4a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V6.41l-7.3 7.3a1 1 0 1 1-1.4-1.42L17.59 5H15a1 1 0 0 1-1-1z"></path>
+                    </svg>
+                    Открыть QR
+                  </a>
+                </div>
+              </div>
+              <div class="cell" data-label="Действия">
+                <button
+                  class="btn btn-danger btn-sm js-open-delete"
+                  type="button"
+                  data-action="/admin/<%= l.id %>/delete?<%= token ? `token=${encodeURIComponent(token)}` : "" %>"
+                  data-title="<%= (l.name || l.id) %>"
+                >
+                    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                      <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+                    </svg>
+                    Удалить
+                </button>
+              </div>
+            </div>
+          <% }) %>
+        </div>
+        <% if (pagination && pagination.totalPages > 1) { %>
+          <div class="pagination">
+            <% if (pagination.page > 1) { %>
+              <a href="/admin?page=<%= pagination.page - 1 %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn">‹</a>
+            <% } %>
+            <% 
+              let startPage = Math.max(1, pagination.page - 2);
+              let endPage = Math.min(pagination.totalPages, pagination.page + 2);
+              if (startPage > 1) { %>
+              <a href="/admin?page=1<%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn">1</a>
+              <% if (startPage > 2) { %>
+                <span class="pagination-ellipsis">…</span>
+              <% } %>
+            <% } %>
+            <% for (let i = startPage; i <= endPage; i++) { %>
+              <% if (i === pagination.page) { %>
+                <span class="pagination-btn pagination-btn-active"><%= i %></span>
+              <% } else { %>
+                <a href="/admin?page=<%= i %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn"><%= i %></a>
+              <% } %>
+            <% } %>
+            <% if (endPage < pagination.totalPages) { %>
+              <% if (endPage < pagination.totalPages - 1) { %>
+                <span class="pagination-ellipsis">…</span>
+              <% } %>
+              <a href="/admin?page=<%= pagination.totalPages %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn"><%= pagination.totalPages %></a>
+            <% } %>
+            <% if (pagination.page < pagination.totalPages) { %>
+              <a href="/admin?page=<%= pagination.page + 1 %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn">›</a>
+            <% } %>
+          </div>
+        <% } %>
+      <% } %>
+    </div>
+
+    <div class="modal" id="delete-modal" aria-hidden="true">
+      <div class="modal-overlay" data-modal-close></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+        <div class="modal-header">
+          <div class="modal-title" id="delete-title">Удалить запись?</div>
+          <button class="icon-btn" type="button" data-modal-close aria-label="Закрыть">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M18 6L6 18M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div>Вы уверены, что хотите удалить <strong class="js-delete-label"></strong>?</div>
+          <div class="modal-note">Это действие нельзя отменить.</div>
+        </div>
+        <form class="modal-actions js-delete-form" method="post">
+          <button class="btn btn-ghost" type="button" data-modal-close>Отмена</button>
+          <button class="btn btn-danger" type="submit">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+            </svg>
+            Удалить
+          </button>
+        </form>
+      </div>
+    </div>
+  </body>
+</html>
+
+
