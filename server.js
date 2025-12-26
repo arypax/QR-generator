@@ -182,10 +182,25 @@ app.get(
   (req, res) => res.redirect("/admin")
 );
 
-app.post("/logout", (req, res) => {
-  if (req.logout) req.logout(() => {});
-  if (req.session) req.session.destroy(() => {});
-  res.redirect("/login");
+app.post("/logout", (req, res, next) => {
+  // Passport 0.6+ requires callback for req.logout
+  const finish = () => {
+    if (!req.session) return res.redirect("/login");
+    req.session.destroy((err) => {
+      if (err) return next(err);
+      return res.redirect("/login");
+    });
+  };
+
+  try {
+    if (!req.logout) return finish();
+    return req.logout((err) => {
+      if (err) return next(err);
+      return finish();
+    });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 app.get("/admin", requireAuth, async (req, res) => {
