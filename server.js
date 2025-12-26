@@ -17,9 +17,12 @@ const PORT = Number(process.env.PORT || 3000);
 const ENV_BASE_URL = (process.env.BASE_URL || "").trim().replace(/\/+$/, "");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
-const DATA_DIR = path.join(__dirname, "data");
+const IS_VERCEL = process.env.VERCEL === "1" || process.env.VERCEL_ENV;
+const DATA_DIR = IS_VERCEL ? "/tmp" : path.join(__dirname, "data");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!IS_VERCEL) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
 
 const DEFAULT_LOGO_PATH = path.join(__dirname, "ales logo.png");
 
@@ -122,7 +125,9 @@ app.post("/admin/create", requireAdmin, upload.single("logo_custom"), (req, res)
       return res.status(400).send("Supported: PNG/JPG/WEBP");
     }
     const customLogoDir = path.join(DATA_DIR, "custom_logos");
-    fs.mkdirSync(customLogoDir, { recursive: true });
+    if (!IS_VERCEL) {
+      fs.mkdirSync(customLogoDir, { recursive: true });
+    }
     const target = path.join(customLogoDir, `${nanoid(12)}${ext}`);
     try {
       fs.renameSync(req.file.path, target);

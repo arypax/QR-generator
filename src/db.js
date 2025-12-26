@@ -38,8 +38,16 @@ function ensureSchema(db) {
 function getDb() {
   if (db) return db;
 
-  const dataDir = path.join(__dirname, "..", "data");
-  fs.mkdirSync(dataDir, { recursive: true });
+  const isVercel = process.env.VERCEL === "1" || process.env.VERCEL_ENV;
+  let dataDir;
+  
+  if (isVercel) {
+    dataDir = "/tmp";
+  } else {
+    dataDir = path.join(__dirname, "..", "data");
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  
   const dbPath = path.join(dataDir, "qr.db");
   db = new Database(dbPath);
   ensureSchema(db);
