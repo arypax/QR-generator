@@ -273,4 +273,8 @@ function startListen(port, attempt = 0) {
   });
 }
 
-startListen(PORT);
+if (require.main === module) {
+  startListen(PORT);
+}
+
+module.exports = app;
