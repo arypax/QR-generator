@@ -25,6 +25,10 @@ npm install
 PORT=3000
 BASE_URL=http://localhost:3000
 ADMIN_TOKEN=your-secret-token
+SESSION_SECRET=change_me
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+DATABASE_URL=postgres://user:pass@host:5432/dbname
 ```
 
 ## Запуск
@@ -34,6 +38,16 @@ npm start
 ```
 
 Приложение будет доступно по адресу `http://localhost:3000/admin?token=your-secret-token`
+
+## Приватность данных / Google вход
+
+Чтобы данные не были общими для всех, включи Google OAuth:
+
+- `SESSION_SECRET` — любой длинный секрет
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — из Google Cloud Console
+- `BASE_URL` — публичный URL (нужен для callback)
+
+После этого `/admin` будет доступен только после входа, и каждый пользователь видит **только свои записи**.
 
 ## Деплой
 

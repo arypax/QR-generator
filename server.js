@@ -6,6 +6,9 @@ require("dotenv").config();
 
 const express = require("express");
 const multer = require("multer");
+const session = require("express-session");
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
 
 const { createStore } = require("./src/store");
 const { createQrPngWithLogo } = require("./src/qr");
@@ -28,9 +31,67 @@ const DEFAULT_LOGO_PATH = path.join(__dirname, "ales logo.png");
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
+app.set("trust proxy", 1);
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use("/static", express.static(path.join(__dirname, "public")));
+
+const SESSION_SECRET = process.env.SESSION_SECRET || "";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+
+if (SESSION_SECRET) {
+  app.use(
+    session({
+      secret: SESSION_SECRET,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production"
+      }
+    })
+  );
+  app.use(passport.initialize());
+  app.use(passport.session());
+}
+
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((user, done) => done(null, user));
+
+function oauthEnabled() {
+  return !!(SESSION_SECRET && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
+}
+
+if (oauthEnabled()) {
+  const base = ENV_BASE_URL || `http://localhost:${PORT}`;
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: GOOGLE_CLIENT_ID,
+        clientSecret: GOOGLE_CLIENT_SECRET,
+        callbackURL: `${base}/auth/google/callback`
+      },
+      async (accessToken, refreshToken, profile, done) => {
+        try {
+          const store = await getStore();
+          const now = new Date().toISOString();
+          const email = profile.emails?.[0]?.value || "";
+          const name = profile.displayName || "";
+          const picture = profile.photos?.[0]?.value || "";
+          const id = String(profile.id || "");
+          await store.getOrCreateUser({ id, email, name, picture, now });
+          await store.claimLegacyLinksIfEmptyUser({ userId: id });
+          return done(null, { id, email, name, picture });
+        } catch (e) {
+          return done(e);
+        }
+      }
+    )
+  );
+}
 
 function resolveBaseUrl(req) {
   if (ENV_BASE_URL) return ENV_BASE_URL;
@@ -64,6 +125,21 @@ function requireAdmin(req, res, next) {
   return next();
 }
 
+function requireAuth(req, res, next) {
+  if (oauthEnabled()) {
+    if (req.isAuthenticated && req.isAuthenticated()) return next();
+    return res.redirect("/login");
+  }
+
+  const token = req.query.token || req.get("x-admin-token") || "";
+  if (ADMIN_TOKEN && token === ADMIN_TOKEN) {
+    req.user = { id: "admin", email: "admin" };
+    return next();
+  }
+
+  return res.status(401).send("Unauthorized");
+}
+
 const upload = multer({
   dest: UPLOADS_DIR,
   limits: { fileSize: 25 * 1024 * 1024 }
@@ -87,18 +163,45 @@ app.get("/", (req, res) => {
   res.redirect("/admin");
 });
 
-app.get("/admin", requireAdmin, async (req, res) => {
+app.get("/login", (req, res) => {
+  if (oauthEnabled() && req.isAuthenticated && req.isAuthenticated()) return res.redirect("/admin");
+  return res.render("login");
+});
+
+app.get("/auth/google", (req, res, next) => {
+  if (!oauthEnabled()) return res.status(500).send("Auth is not configured");
+  return passport.authenticate("google", { scope: ["profile", "email"] })(req, res, next);
+});
+
+app.get(
+  "/auth/google/callback",
+  (req, res, next) => {
+    if (!oauthEnabled()) return res.status(500).send("Auth is not configured");
+    return passport.authenticate("google", { failureRedirect: "/login" })(req, res, next);
+  },
+  (req, res) => res.redirect("/admin")
+);
+
+app.post("/logout", (req, res) => {
+  if (req.logout) req.logout(() => {});
+  if (req.session) req.session.destroy(() => {});
+  res.redirect("/login");
+});
+
+app.get("/admin", requireAuth, async (req, res) => {
   const store = await getStore();
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const perPage = 10;
 
-  const { links, totalCount, totalPages } = await store.getLinksPage({ page, perPage });
+  const userId = req.user.id;
+  const { links, totalCount, totalPages } = await store.getLinksPage({ userId, page, perPage });
 
   res.render("admin", {
     baseUrl: resolveBaseUrl(req),
     token: req.query.token || "",
     error: req.query.error || "",
     links,
+    user: req.user,
     pagination: {
       page,
       totalPages,
@@ -108,7 +211,7 @@ app.get("/admin", requireAdmin, async (req, res) => {
   });
 });
 
-app.post("/admin/create", requireAdmin, upload.single("logo_custom"), async (req, res) => {
+app.post("/admin/create", requireAuth, upload.single("logo_custom"), async (req, res) => {
   const store = await getStore();
   const token = req.query.token || "";
   const parsed = targetUrlSchema.safeParse(req.body.target_url || "");
@@ -138,6 +241,7 @@ app.post("/admin/create", requireAdmin, upload.single("logo_custom"), async (req
   const id = nanoid(8);
   const now = new Date().toISOString();
   await store.createLink({
+    userId: req.user.id,
     id,
     name: nameValue,
     targetUrl: parsed.data,
@@ -146,10 +250,11 @@ app.post("/admin/create", requireAdmin, upload.single("logo_custom"), async (req
     logoCustomMime,
     now
   });
-  res.redirect(`/admin?token=${encodeURIComponent(token)}`);
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  res.redirect(`/admin${qs}`);
 });
 
-app.post("/admin/:id/update", requireAdmin, async (req, res) => {
+app.post("/admin/:id/update", requireAuth, async (req, res) => {
   const store = await getStore();
   const token = req.query.token || "";
   const id = String(req.params.id || "");
@@ -160,28 +265,30 @@ app.post("/admin/:id/update", requireAdmin, async (req, res) => {
     if (!parsed.success) {
       return res.status(400).send(parsed.error.issues.map((i) => i.message).join("; "));
     }
-    const changes = await store.updateTargetUrl({ id, targetUrl: parsed.data, now });
+    const changes = await store.updateTargetUrl({ userId: req.user.id, id, targetUrl: parsed.data, now });
     if (changes === 0) return res.status(404).send("Not found");
   }
   
   if (req.body.name !== undefined) {
     const nameValue = parseName(req.body.name);
-    const changes = await store.updateName({ id, name: nameValue, now });
+    const changes = await store.updateName({ userId: req.user.id, id, name: nameValue, now });
     if (changes === 0) return res.status(404).send("Not found");
   }
   
-  res.redirect(`/admin?token=${encodeURIComponent(token)}`);
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  res.redirect(`/admin${qs}`);
 });
 
-app.post("/admin/:id/delete", requireAdmin, async (req, res) => {
+app.post("/admin/:id/delete", requireAuth, async (req, res) => {
   const store = await getStore();
   const token = req.query.token || "";
   const id = String(req.params.id || "");
-  await store.deleteLink({ id });
-  res.redirect(`/admin?token=${encodeURIComponent(token)}`);
+  await store.deleteLink({ userId: req.user.id, id });
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  res.redirect(`/admin${qs}`);
 });
 
-app.post("/admin/logo", requireAdmin, upload.single("logo"), async (req, res) => {
+app.post("/admin/logo", requireAuth, upload.single("logo"), async (req, res) => {
   const store = await getStore();
   const token = req.query.token || "";
   if (!req.file) return res.status(400).send("No file uploaded");
@@ -197,9 +304,9 @@ app.post("/admin/logo", requireAdmin, upload.single("logo"), async (req, res) =>
   const logoMime = req.file.mimetype || "";
   fs.unlinkSync(req.file.path);
 
-  await store.upsertSettingBlob({ key: "logo_blob", blob: logoBlob, mime: logoMime });
-
-  res.redirect(`/admin?token=${encodeURIComponent(token)}`);
+  await store.upsertSettingBlob({ key: `user:${req.user.id}:logo_blob`, blob: logoBlob, mime: logoMime });
+  const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+  res.redirect(`/admin${qs}`);
 });
 
 app.get("/qr/:id.png", async (req, res) => {
@@ -211,9 +318,7 @@ app.get("/qr/:id.png", async (req, res) => {
   let logoPath = null;
   let logoBuffer = null;
   if (row.logo_mode === "default") {
-    const logo = await resolveDefaultLogo(store);
-    logoPath = logo.path || null;
-    logoBuffer = logo.buffer || null;
+    logoPath = fs.existsSync(DEFAULT_LOGO_PATH) ? DEFAULT_LOGO_PATH : null;
   } else if (row.logo_mode === "custom") {
     if (row.logo_custom_blob) {
       logoBuffer = Buffer.from(row.logo_custom_blob);

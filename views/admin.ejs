@@ -18,6 +18,14 @@
           <h1>QR генератор</h1>
           <p class="subtitle">Создавайте QR-коды и управляйте ссылками в одном месте.</p>
         </div>
+        <div class="header-actions">
+          <div class="user-pill">
+            <span class="user-email"><%= user?.email || "" %></span>
+          </div>
+          <form action="/logout" method="post">
+            <button class="btn btn-ghost btn-sm" type="submit">Выйти</button>
+          </form>
+        </div>
       </header>
 
       <% if (error === "file_too_large") { %>
@@ -27,7 +35,7 @@
       <% } %>
 
       <section class="panel form-section">
-        <form action="/admin/create?<%= token ? `token=${encodeURIComponent(token)}` : "" %>" method="post" enctype="multipart/form-data" class="create-form">
+        <form action="/admin/create" method="post" enctype="multipart/form-data" class="create-form">
           <div class="field">
             <label class="label" for="create-name">Название (необязательно)</label>
             <input id="create-name" class="input" name="name" type="text" placeholder="Например: Обучение инженера" />
@@ -101,13 +109,13 @@
             <div class="trow" data-id="<%= l.id %>">
               <div class="cell" data-label="ID"><code><%= l.id %></code></div>
               <div class="cell" data-label="Название">
-                <div class="name-editor" data-update-url="/admin/<%= l.id %>/update?<%= token ? `token=${encodeURIComponent(token)}` : "" %>">
+                <div class="name-editor" data-update-url="/admin/<%= l.id %>/update">
                   <input class="input input-sm js-name-input" name="name" type="text" value="<%= l.name || '' %>" placeholder="Без названия" />
                   <span class="save-state js-name-state" aria-live="polite"></span>
                 </div>
               </div>
               <div class="cell target-url" data-label="Целевая ссылка">
-                <div class="url-editor" data-update-url="/admin/<%= l.id %>/update?<%= token ? `token=${encodeURIComponent(token)}` : "" %>">
+                <div class="url-editor" data-update-url="/admin/<%= l.id %>/update">
                   <input class="input input-sm js-target-url" name="target_url" type="url" value="<%= l.target_url %>" required />
                   <span class="save-state js-save-state" aria-live="polite"></span>
                 </div>
@@ -134,7 +142,7 @@
                 <button
                   class="btn btn-danger btn-sm js-open-delete"
                   type="button"
-                  data-action="/admin/<%= l.id %>/delete?<%= token ? `token=${encodeURIComponent(token)}` : "" %>"
+                  data-action="/admin/<%= l.id %>/delete"
                   data-title="<%= (l.name || l.id) %>"
                 >
                     <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -149,13 +157,13 @@
         <% if (pagination && pagination.totalPages > 1) { %>
           <div class="pagination">
             <% if (pagination.page > 1) { %>
-              <a href="/admin?page=<%= pagination.page - 1 %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn">‹</a>
+              <a href="/admin?page=<%= pagination.page - 1 %>" class="pagination-btn">‹</a>
             <% } %>
             <% 
               let startPage = Math.max(1, pagination.page - 2);
               let endPage = Math.min(pagination.totalPages, pagination.page + 2);
               if (startPage > 1) { %>
-              <a href="/admin?page=1<%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn">1</a>
+              <a href="/admin?page=1" class="pagination-btn">1</a>
               <% if (startPage > 2) { %>
                 <span class="pagination-ellipsis">…</span>
               <% } %>
@@ -164,17 +172,17 @@
               <% if (i === pagination.page) { %>
                 <span class="pagination-btn pagination-btn-active"><%= i %></span>
               <% } else { %>
-                <a href="/admin?page=<%= i %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn"><%= i %></a>
+                <a href="/admin?page=<%= i %>" class="pagination-btn"><%= i %></a>
               <% } %>
             <% } %>
             <% if (endPage < pagination.totalPages) { %>
               <% if (endPage < pagination.totalPages - 1) { %>
                 <span class="pagination-ellipsis">…</span>
               <% } %>
-              <a href="/admin?page=<%= pagination.totalPages %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn"><%= pagination.totalPages %></a>
+              <a href="/admin?page=<%= pagination.totalPages %>" class="pagination-btn"><%= pagination.totalPages %></a>
             <% } %>
             <% if (pagination.page < pagination.totalPages) { %>
-              <a href="/admin?page=<%= pagination.page + 1 %><%= token ? `&token=${encodeURIComponent(token)}` : "" %>" class="pagination-btn">›</a>
+              <a href="/admin?page=<%= pagination.page + 1 %>" class="pagination-btn">›</a>
             <% } %>
           </div>
         <% } %>
