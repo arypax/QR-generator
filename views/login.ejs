@@ -9,18 +9,25 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/loading.js" defer></script>
   </head>
   <body>
     <div class="container">
       <header class="page-header">
-        <div class="title-wrap">
-          <h1>QR генератор</h1>
-          <p class="subtitle">Войдите через Google, чтобы видеть только свои QR-коды.</p>
+        <div class="title-wrap login-hero">
+          <div class="brand">
+            <img class="brand-logo" src="/static/kursa-logo.png" alt="Kursa Technology" />
+            <div class="brand-text">
+              <h1>QR генератор</h1>
+              <p class="subtitle">Войдите через Google, чтобы видеть только свои QR-коды.</p>
+              <p class="byline">Разработчик продукта — <strong>Kursa Technology</strong></p>
+            </div>
+          </div>
         </div>
       </header>
 
       <section class="panel">
-        <a class="btn btn-primary" href="/auth/google">
+        <a class="btn btn-primary" href="/auth/google" data-loading="1">
           Войти через Google
         </a>
       </section>
