@@ -37,7 +37,18 @@ npm start
 
 ## Деплой
 
-### Vercel (рекомендуется)
+### Важно про GitHub Pages
+
+GitHub Pages умеет хостить **только статические сайты** (HTML/CSS/JS). Это приложение — **Node.js/Express + SQLite**, поэтому на GitHub Pages оно работать не будет без потери функционала.
+
+Правильная схема: **репозиторий на GitHub → деплой на хостинг Node.js** (Render/Railway/Vercel). При желании GitHub Pages можно использовать как “витрину/редирект”.
+
+### Render (рекомендуется для SQLite без потери данных)
+
+- В репозитории уже есть `render.yaml` с persistent disk (данные не теряются).
+- В Render: New → Blueprint → выбрать репозиторий → задать `ADMIN_TOKEN` → Deploy.
+
+### Vercel
 
 1. Установите Vercel CLI: `npm i -g vercel`
 2. Запустите: `vercel`
