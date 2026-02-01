@@ -173,14 +173,18 @@ app.get("/auth/google", (req, res, next) => {
   return passport.authenticate("google", { scope: ["profile", "email"] })(req, res, next);
 });
 
-app.get(
-  "/auth/google/callback",
-  (req, res, next) => {
-    if (!oauthEnabled()) return res.status(500).send("Auth is not configured");
-    return passport.authenticate("google", { failureRedirect: "/login" })(req, res, next);
-  },
-  (req, res) => res.redirect("/admin")
-);
+app.get("/auth/google/callback", (req, res, next) => {
+  if (!oauthEnabled()) return res.status(500).send("Auth is not configured");
+
+  passport.authenticate("google", (err, user) => {
+    if (err) {
+      console.error("Google OAuth error:", err);
+      return res.status(500).send(err.message || String(err));
+    }
+    if (!user) return res.redirect("/login");
+    req.logIn(user, (e) => (e ? next(e) : res.redirect("/admin")));
+  })(req, res, next);
+});
 
 app.post("/logout", (req, res, next) => {
   // Passport 0.6+ requires callback for req.logout
