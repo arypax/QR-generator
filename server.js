@@ -66,7 +66,7 @@ function oauthEnabled() {
 }
 
 if (oauthEnabled()) {
-  const base = ENV_BASE_URL || `http://localhost:${PORT}`;
+  const base = 'https://qr-generator-0yne.onrender.com';
   passport.use(
     new GoogleStrategy(
       {
