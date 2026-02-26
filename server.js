@@ -405,6 +405,13 @@ app.use((err, req, res, next) => {
 app.use((err, req, res, next) => {
   console.error("Unhandled app error:", err);
   if (res.headersSent) return next(err);
+  const debugEnabled = String(req.query?.debug || "") === "1" || String(process.env.DEBUG_ERRORS || "") === "1";
+  if (debugEnabled) {
+    return res
+      .status(500)
+      .type("text/plain; charset=utf-8")
+      .send(err?.stack || err?.message || String(err));
+  }
   return res.status(500).send("Internal Server Error");
 });
 
