@@ -1,0 +1,10 @@
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/app"
+  status = 200
+
+[build]
+  command = "npm install"
+  functions = "netlify/functions"
+  publish = "public"
+
