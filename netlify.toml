@@ -9,7 +9,9 @@
   publish = "public"
 
 [functions]
-  included_files = ["../views/**", "../public/**", "../ales logo.png", "../server.js", "../src/**"]
   node_bundler = "esbuild"
   external_node_modules = ["ejs", "sharp", "better-sqlite3", "nanoid", "pg"]
+
+[functions."app"]
+  included_files = ["views/**", "public/**", "ales logo.png"]
 
