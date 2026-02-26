@@ -12,7 +12,6 @@ const GoogleStrategy = require("passport-google-oauth20").Strategy;
 
 const { createStore } = require("./src/store");
 const { createQrPngWithLogo } = require("./src/qr");
-const { nanoid } = require("nanoid");
 const { z } = require("zod");
 
 const app = express();
@@ -256,7 +255,8 @@ app.post("/admin/create", requireAuth, upload.single("logo_custom"), async (req,
   } else if (req.file) {
     fs.unlinkSync(req.file.path);
   }
-  
+
+  const { nanoid } = await import("nanoid");
   const id = nanoid(8);
   const now = new Date().toISOString();
   await store.createLink({
