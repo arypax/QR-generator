@@ -20,21 +20,23 @@ const PORT = Number(process.env.PORT || 3000);
 const ENV_BASE_URL = (process.env.BASE_URL || "").trim().replace(/\/+$/, "");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
+const APP_ROOT = process.env.NETLIFY ? process.cwd() : __dirname;
+
 const UPLOADS_DIR =
   (process.env.UPLOADS_DIR && String(process.env.UPLOADS_DIR).trim()) ||
   path.join(os.tmpdir(), "qr-generator-uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-const DEFAULT_LOGO_PATH = path.join(__dirname, "ales logo.png");
+const DEFAULT_LOGO_PATH = path.join(APP_ROOT, "ales logo.png");
 
 app.set("view engine", "ejs");
-app.set("views", path.join(__dirname, "views"));
+app.set("views", path.join(APP_ROOT, "views"));
 
 app.set("trust proxy", 1);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use("/static", express.static(path.join(__dirname, "public")));
+app.use("/static", express.static(path.join(APP_ROOT, "public")));
 
 const SESSION_SECRET = process.env.SESSION_SECRET || "";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";

@@ -8,3 +8,7 @@
   functions = "netlify/functions"
   publish = "public"
 
+[functions]
+  included_files = ["./views/**", "./public/**", "./ales logo.png", "./server.js", "./src/**"]
+  node_bundler = "esbuild"
+
