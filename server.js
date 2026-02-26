@@ -21,7 +21,27 @@ const PORT = Number(process.env.PORT || 3000);
 const ENV_BASE_URL = (process.env.BASE_URL || "").trim().replace(/\/+$/, "");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 
-const APP_ROOT = process.env.NETLIFY ? process.cwd() : __dirname;
+function resolveAppRoot() {
+  const fallback = process.env.NETLIFY ? process.cwd() : __dirname;
+  const candidates = Array.from(
+    new Set([
+      process.cwd(),
+      __dirname,
+      path.resolve(process.cwd(), ".."),
+      path.resolve(process.cwd(), "../.."),
+      path.resolve(__dirname, ".."),
+      path.resolve(__dirname, "../..")
+    ])
+  );
+  const found = candidates.find((root) => {
+    const hasViews = fs.existsSync(path.join(root, "views", "login.ejs"));
+    const hasPublic = fs.existsSync(path.join(root, "public", "styles.css"));
+    return hasViews && hasPublic;
+  });
+  return found || fallback;
+}
+
+const APP_ROOT = resolveAppRoot();
 
 const UPLOADS_DIR =
   (process.env.UPLOADS_DIR && String(process.env.UPLOADS_DIR).trim()) ||
@@ -177,37 +197,6 @@ function parseName(input) {
   if (trimmed.length > 80) return trimmed.substring(0, 80);
   return trimmed;
 }
-
-app.get("/__debug/fs", (req, res) => {
-  if (String(req.query.debug || "") !== "1") return res.status(404).send("Not found");
-  const roots = Array.from(
-    new Set([
-      process.cwd(),
-      __dirname,
-      path.resolve(process.cwd(), ".."),
-      path.resolve(process.cwd(), "../.."),
-      path.resolve(__dirname, ".."),
-      path.resolve(__dirname, "../.."),
-      "/var/task",
-      "/var/task/netlify/functions"
-    ])
-  );
-  const checks = roots.map((root) => ({
-    root,
-    hasViews: fs.existsSync(path.join(root, "views")),
-    hasLoginView: fs.existsSync(path.join(root, "views", "login.ejs")),
-    hasPublic: fs.existsSync(path.join(root, "public")),
-    hasStyles: fs.existsSync(path.join(root, "public", "styles.css")),
-    hasLogo: fs.existsSync(path.join(root, "ales logo.png"))
-  }));
-  return res.json({
-    netlify: !!process.env.NETLIFY,
-    cwd: process.cwd(),
-    dirname: __dirname,
-    appRoot: APP_ROOT,
-    checks
-  });
-});
 
 app.get("/", (req, res) => {
   res.redirect("/admin");
@@ -436,13 +425,6 @@ app.use((err, req, res, next) => {
 app.use((err, req, res, next) => {
   console.error("Unhandled app error:", err);
   if (res.headersSent) return next(err);
-  const debugEnabled = String(req.query?.debug || "") === "1" || String(process.env.DEBUG_ERRORS || "") === "1";
-  if (debugEnabled) {
-    return res
-      .status(500)
-      .type("text/plain; charset=utf-8")
-      .send(err?.stack || err?.message || String(err));
-  }
   return res.status(500).send("Internal Server Error");
 });
 
