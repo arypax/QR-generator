@@ -178,6 +178,37 @@ function parseName(input) {
   return trimmed;
 }
 
+app.get("/__debug/fs", (req, res) => {
+  if (String(req.query.debug || "") !== "1") return res.status(404).send("Not found");
+  const roots = Array.from(
+    new Set([
+      process.cwd(),
+      __dirname,
+      path.resolve(process.cwd(), ".."),
+      path.resolve(process.cwd(), "../.."),
+      path.resolve(__dirname, ".."),
+      path.resolve(__dirname, "../.."),
+      "/var/task",
+      "/var/task/netlify/functions"
+    ])
+  );
+  const checks = roots.map((root) => ({
+    root,
+    hasViews: fs.existsSync(path.join(root, "views")),
+    hasLoginView: fs.existsSync(path.join(root, "views", "login.ejs")),
+    hasPublic: fs.existsSync(path.join(root, "public")),
+    hasStyles: fs.existsSync(path.join(root, "public", "styles.css")),
+    hasLogo: fs.existsSync(path.join(root, "ales logo.png"))
+  }));
+  return res.json({
+    netlify: !!process.env.NETLIFY,
+    cwd: process.cwd(),
+    dirname: __dirname,
+    appRoot: APP_ROOT,
+    checks
+  });
+});
+
 app.get("/", (req, res) => {
   res.redirect("/admin");
 });
