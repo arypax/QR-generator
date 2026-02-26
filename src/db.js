@@ -1,8 +1,9 @@
 const path = require("path");
 const fs = require("fs");
-const Database = require("better-sqlite3");
+const os = require("os");
 
 let db;
+let Database;
 
 function ensureSchema(db) {
   db.exec(`
@@ -39,17 +40,21 @@ function getDb() {
   if (db) return db;
 
   const isVercel = process.env.VERCEL === "1" || process.env.VERCEL_ENV;
+  const isNetlify = !!process.env.NETLIFY;
+  const isServerless = isVercel || isNetlify || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
   const dataDir =
     (process.env.DATA_DIR && String(process.env.DATA_DIR).trim()) ||
-    (isVercel ? "/tmp" : path.join(__dirname, "..", "data"));
+    (isServerless ? path.join(os.tmpdir(), "qr-generator-data") : path.join(__dirname, "..", "data"));
 
   fs.mkdirSync(dataDir, { recursive: true });
   const dbPath = path.join(dataDir, "qr.db");
+  if (!Database) {
+    Database = require("better-sqlite3");
+  }
   db = new Database(dbPath);
   ensureSchema(db);
   return db;
 }
 
 module.exports = { getDb };
-
 

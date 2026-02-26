@@ -5,6 +5,7 @@ const os = require("os");
 require("dotenv").config();
 
 const express = require("express");
+const ejs = require("ejs");
 const multer = require("multer");
 const session = require("express-session");
 const passport = require("passport");
@@ -30,6 +31,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 const DEFAULT_LOGO_PATH = path.join(APP_ROOT, "ales logo.png");
 
 app.set("view engine", "ejs");
+app.engine("ejs", ejs.__express);
 app.set("views", path.join(APP_ROOT, "views"));
 
 app.set("trust proxy", 1);
@@ -66,14 +68,30 @@ function oauthEnabled() {
   return !!(SESSION_SECRET && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 }
 
+function resolveOAuthBaseUrl() {
+  const candidates = [
+    ENV_BASE_URL,
+    process.env.URL,
+    process.env.DEPLOY_PRIME_URL,
+    process.env.DEPLOY_URL,
+    process.env.SITE_URL
+  ];
+  const value = candidates.find((entry) => typeof entry === "string" && entry.trim());
+  return value ? value.trim().replace(/\/+$/, "") : "";
+}
+
 if (oauthEnabled()) {
-  const base = 'https://qr-generator-0yne.onrender.com';
+  const oauthBase = resolveOAuthBaseUrl();
+  const callbackPath = "/auth/google/callback";
+  const callbackURL = oauthBase ? `${oauthBase}${callbackPath}` : callbackPath;
+
   passport.use(
     new GoogleStrategy(
       {
         clientID: GOOGLE_CLIENT_ID,
         clientSecret: GOOGLE_CLIENT_SECRET,
-        callbackURL: `${base}/auth/google/callback`
+        callbackURL,
+        proxy: true
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
@@ -382,6 +400,12 @@ app.use((err, req, res, next) => {
     return res.redirect(`/admin${qs}`);
   }
   return next(err);
+});
+
+app.use((err, req, res, next) => {
+  console.error("Unhandled app error:", err);
+  if (res.headersSent) return next(err);
+  return res.status(500).send("Internal Server Error");
 });
 
 function startListen(port, attempt = 0) {
