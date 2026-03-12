@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const crypto = require("crypto");
 
 require("dotenv").config();
 
@@ -17,9 +18,41 @@ const { z } = require("zod");
 
 const app = express();
 
+function normalizeBaseUrl(value) {
+  return typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
+}
+
+function firstForwardedValue(value) {
+  return typeof value === "string" ? value.split(",")[0].trim() : "";
+}
+
+function tryParseUrl(value) {
+  if (!value) return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackBaseUrl(value) {
+  const parsed = tryParseUrl(value);
+  if (!parsed) return false;
+  return new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]).has(parsed.hostname);
+}
+
 const PORT = Number(process.env.PORT || 3000);
-const ENV_BASE_URL = (process.env.BASE_URL || "").trim().replace(/\/+$/, "");
+const ENV_BASE_URL = normalizeBaseUrl(process.env.BASE_URL || "");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const IS_SERVERLESS_RUNTIME = !!(
+  process.env.NETLIFY ||
+  process.env.VERCEL === "1" ||
+  process.env.VERCEL_ENV ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME
+);
+const GOOGLE_CALLBACK_PATH = "/auth/google/callback";
+const AUTH_COOKIE_NAME = "qr_admin_auth";
+const AUTH_COOKIE_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 function resolveAppRoot() {
   const fallback = process.env.NETLIFY ? process.cwd() : __dirname;
@@ -64,6 +97,104 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 
+function parseCookies(header) {
+  return String(header || "")
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((acc, part) => {
+      const index = part.indexOf("=");
+      if (index === -1) return acc;
+      const key = part.slice(0, index).trim();
+      const value = part.slice(index + 1).trim();
+      if (key) acc[key] = decodeURIComponent(value);
+      return acc;
+    }, {});
+}
+
+function signCookieValue(value) {
+  return crypto.createHmac("sha256", SESSION_SECRET).update(value).digest("base64url");
+}
+
+function serializeCookie(name, value, options = {}) {
+  const parts = [`${name}=${encodeURIComponent(value)}`];
+  if (options.maxAge !== undefined) parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAge))}`);
+  if (options.path) parts.push(`Path=${options.path}`);
+  if (options.httpOnly) parts.push("HttpOnly");
+  if (options.sameSite) parts.push(`SameSite=${options.sameSite}`);
+  if (options.secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function buildAuthCookieValue(user) {
+  const payload = Buffer.from(
+    JSON.stringify({
+      id: String(user.id || ""),
+      email: String(user.email || ""),
+      name: String(user.name || ""),
+      exp: Date.now() + AUTH_COOKIE_TTL_SECONDS * 1000
+    })
+  ).toString("base64url");
+  const signature = signCookieValue(payload);
+  return `${payload}.${signature}`;
+}
+
+function readAuthCookie(req) {
+  if (!SESSION_SECRET) return null;
+  const cookieValue = parseCookies(req.headers.cookie || "")[AUTH_COOKIE_NAME];
+  if (!cookieValue) return null;
+
+  const dotIndex = cookieValue.lastIndexOf(".");
+  if (dotIndex <= 0) return null;
+
+  const payload = cookieValue.slice(0, dotIndex);
+  const signature = cookieValue.slice(dotIndex + 1);
+  const expectedSignature = signCookieValue(payload);
+  if (signature.length !== expectedSignature.length) return null;
+
+  const isValid = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+  if (!isValid) return null;
+
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!parsed?.id || !parsed?.exp || parsed.exp < Date.now()) return null;
+    return {
+      id: String(parsed.id),
+      email: String(parsed.email || ""),
+      name: String(parsed.name || "")
+    };
+  } catch {
+    return null;
+  }
+}
+
+function setAuthCookie(res, user) {
+  if (!SESSION_SECRET) return;
+  res.append(
+    "Set-Cookie",
+    serializeCookie(AUTH_COOKIE_NAME, buildAuthCookieValue(user), {
+      path: "/",
+      maxAge: AUTH_COOKIE_TTL_SECONDS,
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production"
+    })
+  );
+}
+
+function clearAuthCookie(res) {
+  res.append(
+    "Set-Cookie",
+    serializeCookie(AUTH_COOKIE_NAME, "", {
+      path: "/",
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production"
+    })
+  );
+}
+
 if (SESSION_SECRET) {
   app.use(
     session({
@@ -81,6 +212,14 @@ if (SESSION_SECRET) {
   app.use(passport.session());
 }
 
+app.use((req, res, next) => {
+  if (!req.user) {
+    const authUser = readAuthCookie(req);
+    if (authUser) req.user = authUser;
+  }
+  return next();
+});
+
 passport.serializeUser((user, done) => done(null, user));
 passport.deserializeUser((user, done) => done(null, user));
 
@@ -88,29 +227,53 @@ function oauthEnabled() {
   return !!(SESSION_SECRET && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 }
 
-function resolveOAuthBaseUrl() {
+function resolveConfiguredBaseUrl() {
   const candidates = [
     ENV_BASE_URL,
+    process.env.SITE_URL,
     process.env.URL,
     process.env.DEPLOY_PRIME_URL,
-    process.env.DEPLOY_URL,
-    process.env.SITE_URL
+    process.env.DEPLOY_URL
   ];
-  const value = candidates.find((entry) => typeof entry === "string" && entry.trim());
-  return value ? value.trim().replace(/\/+$/, "") : "";
+  const value = candidates.map(normalizeBaseUrl).find(Boolean);
+  return value || "";
+}
+
+function resolveRequestBaseUrl(req) {
+  if (!req) return "";
+  const proto = firstForwardedValue(req.get("x-forwarded-proto")) || req.protocol || "http";
+  const host = firstForwardedValue(req.get("x-forwarded-host")) || req.get("host") || "";
+  if (!host) return "";
+  return normalizeBaseUrl(`${proto}://${host}`);
+}
+
+function resolveBaseUrl(req, options = {}) {
+  const requestBaseUrl = resolveRequestBaseUrl(req);
+  const configuredBaseUrl = resolveConfiguredBaseUrl();
+  const preferRequestHost = options.preferRequestHost ?? IS_SERVERLESS_RUNTIME;
+
+  if (preferRequestHost && requestBaseUrl) return requestBaseUrl;
+  if (configuredBaseUrl) {
+    if (requestBaseUrl && isLoopbackBaseUrl(configuredBaseUrl) && !isLoopbackBaseUrl(requestBaseUrl)) {
+      return requestBaseUrl;
+    }
+    return configuredBaseUrl;
+  }
+  return requestBaseUrl;
+}
+
+function resolveGoogleCallbackUrl(req) {
+  const baseUrl = resolveBaseUrl(req, { preferRequestHost: true });
+  return baseUrl ? `${baseUrl}${GOOGLE_CALLBACK_PATH}` : GOOGLE_CALLBACK_PATH;
 }
 
 if (oauthEnabled()) {
-  const oauthBase = resolveOAuthBaseUrl();
-  const callbackPath = "/auth/google/callback";
-  const callbackURL = oauthBase ? `${oauthBase}${callbackPath}` : callbackPath;
-
   passport.use(
     new GoogleStrategy(
       {
         clientID: GOOGLE_CLIENT_ID,
         clientSecret: GOOGLE_CLIENT_SECRET,
-        callbackURL,
+        callbackURL: GOOGLE_CALLBACK_PATH,
         proxy: true
       },
       async (accessToken, refreshToken, profile, done) => {
@@ -130,13 +293,6 @@ if (oauthEnabled()) {
       }
     )
   );
-}
-
-function resolveBaseUrl(req) {
-  if (ENV_BASE_URL) return ENV_BASE_URL;
-  const proto = req.headers["x-forwarded-proto"] || req.protocol || "http";
-  const host = req.get("host");
-  return `${proto}://${host}`.replace(/\/+$/, "");
 }
 
 let storePromise;
@@ -166,6 +322,7 @@ function requireAdmin(req, res, next) {
 
 function requireAuth(req, res, next) {
   if (oauthEnabled()) {
+    if (req.user?.id) return next();
     if (req.isAuthenticated && req.isAuthenticated()) return next();
     return res.redirect("/login");
   }
@@ -203,31 +360,41 @@ app.get("/", (req, res) => {
 });
 
 app.get("/login", (req, res) => {
+  if (oauthEnabled() && req.user?.id) return res.redirect("/admin");
   if (oauthEnabled() && req.isAuthenticated && req.isAuthenticated()) return res.redirect("/admin");
   return res.render("login");
 });
 
 app.get("/auth/google", (req, res, next) => {
   if (!oauthEnabled()) return res.status(500).send("Auth is not configured");
-  return passport.authenticate("google", { scope: ["profile", "email"] })(req, res, next);
+  const callbackURL = resolveGoogleCallbackUrl(req);
+  console.log(`Starting Google OAuth with callback ${callbackURL}`);
+  return passport.authenticate("google", { scope: ["profile", "email"], callbackURL })(req, res, next);
 });
 
 app.get("/auth/google/callback", (req, res, next) => {
   if (!oauthEnabled()) return res.status(500).send("Auth is not configured");
+  const callbackURL = resolveGoogleCallbackUrl(req);
 
-  passport.authenticate("google", (err, user) => {
+  passport.authenticate("google", { callbackURL }, (err, user) => {
     if (err) {
       console.error("Google OAuth error:", err);
       return res.status(500).send(err.message || String(err));
     }
     if (!user) return res.redirect("/login");
-    req.logIn(user, (e) => (e ? next(e) : res.redirect("/admin")));
+    const finishLogin = () => {
+      setAuthCookie(res, user);
+      return res.redirect("/admin");
+    };
+    if (!req.logIn || !req.session) return finishLogin();
+    req.logIn(user, (e) => (e ? next(e) : finishLogin()));
   })(req, res, next);
 });
 
 app.post("/logout", (req, res, next) => {
   // Passport 0.6+ requires callback for req.logout
   const finish = () => {
+    clearAuthCookie(res);
     if (!req.session) return res.redirect("/login");
     req.session.destroy((err) => {
       if (err) return next(err);
@@ -430,7 +597,8 @@ app.use((err, req, res, next) => {
 
 function startListen(port, attempt = 0) {
   const server = app.listen(port, () => {
-    console.log(`QR generator running on port ${port}${ENV_BASE_URL ? ` (${ENV_BASE_URL})` : ""}`);
+    const configuredBaseUrl = resolveConfiguredBaseUrl();
+    console.log(`QR generator running on port ${port}${configuredBaseUrl ? ` (${configuredBaseUrl})` : ""}`);
     if (ADMIN_TOKEN) console.log("Admin token protection: ENABLED");
     else console.log("Admin token protection: DISABLED (set ADMIN_TOKEN in .env to enable)");
   });
